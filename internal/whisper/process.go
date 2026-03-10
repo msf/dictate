@@ -22,21 +22,24 @@ type Process struct {
 	lang      string
 	threads   int
 	pwNodeID  int
+	cpuOnly   bool
 	onText    func(string)
 	startTime time.Time
+	lastEmit  time.Time
 
 	mu      sync.Mutex
 	cmd     *exec.Cmd
 	running bool
 }
 
-func NewProcess(streamBin, model, lang string, threads, pwNodeID int, onText func(string)) *Process {
+func NewProcess(streamBin, model, lang string, threads, pwNodeID int, cpuOnly bool, onText func(string)) *Process {
 	return &Process{
 		streamBin: streamBin,
 		model:     model,
 		lang:      lang,
 		threads:   threads,
 		pwNodeID:  pwNodeID,
+		cpuOnly:   cpuOnly,
 		onText:    onText,
 	}
 }
@@ -70,14 +73,18 @@ func (p *Process) Toggle() {
 }
 
 func (p *Process) startLocked() error {
-	p.cmd = exec.Command(p.streamBin,
+	args := []string{
 		"-m", p.model,
 		"-l", p.lang,
 		"-t", fmt.Sprintf("%d", p.threads),
-		"--step", "2000",
-		"--length", "5000",
+		"--step", "3000",
+		"--length", "8000",
 		"--keep", "200",
-	)
+	}
+	if p.cpuOnly {
+		args = append(args, "-ng")
+	}
+	p.cmd = exec.Command(p.streamBin, args...)
 
 	// Route SDL2 audio capture to our chosen PipeWire node.
 	// Per-process only — no system-wide side effects.
@@ -92,6 +99,7 @@ func (p *Process) startLocked() error {
 
 	p.cmd.Stderr = os.Stderr
 	p.startTime = time.Now()
+	p.lastEmit = p.startTime
 
 	if err := p.cmd.Start(); err != nil {
 		return fmt.Errorf("start whisper-stream: %w", err)
@@ -106,8 +114,11 @@ func (p *Process) startLocked() error {
 			if text == "" || isHallucination(text) {
 				continue
 			}
-			elapsed := time.Since(p.startTime).Truncate(100 * time.Millisecond)
-			stamped := fmt.Sprintf("[%s] %s", formatDuration(elapsed), text)
+			now := time.Now()
+			elapsed := now.Sub(p.startTime).Truncate(100 * time.Millisecond)
+			delta := now.Sub(p.lastEmit).Truncate(100 * time.Millisecond)
+			p.lastEmit = now
+			stamped := fmt.Sprintf("[%s Δ%.1fs] %s", formatDuration(elapsed), delta.Seconds(), text)
 			p.onText(stamped)
 		}
 		p.mu.Lock()

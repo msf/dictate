@@ -76,16 +76,17 @@ The Go parser:
 3. Strips ANSI escape codes
 4. Drops whisper special tokens (`[BLANK_AUDIO]`, `[Start speaking]`, etc.)
 5. Drops hallucination text (non-Latin scripts, known phrases)
-6. Prepends timestamp: `[MM:SS.s] transcribed text`
+6. Prepends timestamp with cycle delta: `[MM:SS.s Δ3.2s] transcribed text`
 
 ### Streaming parameters
 
-- `--step 2000` (2s): inference runs every 2 seconds
-- `--length 5000` (5s): each inference window is 5 seconds of audio
-- `n_new_line = 1`: text finalized every step (~2.8s with inference)
-- Encode time: ~800ms/step on Ryzen 9 24C with base model
+- `--step 3000` (3s): inference runs every 3 seconds
+- `--length 8000` (8s): each inference window is 8 seconds of audio
+- `--keep 200`: 200ms of audio context kept between windows
+- Encode time: ~2200ms/step on Radeon 890M Vulkan with large-v3-turbo-q5_0
+- With 3s step, ~800ms headroom per cycle (no audio drops)
 
-Effective latency: **~2-3 seconds** from speech to text on stdout.
+Effective latency: **~3-4 seconds** from speech to text on stdout.
 
 ### Toggle mechanism
 
@@ -97,13 +98,14 @@ Unix signals. Sway keybinding sends `pkill -USR1 dictate`:
 
 ```
 dictate [--model path] [--lang auto|en|pt] [--device ID|name] [--file path]
-        [--list-devices]
+        [--cpu] [--list-devices]
 ```
 
 - `--model`: path to ggml model. Default: largest `ggml-*.bin` in `models/`
 - `--lang`: language for transcription. Default: `auto`
 - `--device`: PipeWire node ID or name substring. Default: auto-detect best mic
 - `--file`: also tee output to a file (append mode)
+- `--cpu`: disable GPU (Vulkan) inference, use CPU only
 - `--list-devices`: print audio sources and exit
 
 Output goes to **stdout** by default. All log/diagnostic output goes to stderr.
@@ -112,14 +114,22 @@ Output goes to **stdout** by default. All log/diagnostic output goes to stderr.
 
 Multilingual models (not `.en` variants) — supports Portuguese, English, and auto-detect.
 
-| Model | Size | Speed (Ryzen 9) | Quality | Use case |
-|---|---|---|---|---|
-| `ggml-tiny.bin` | 75MB | real-time++ | poor | Low-power machines (T460) |
-| `ggml-base.bin` | 142MB | real-time++ | fair | Fast iteration/testing |
-| `ggml-small.bin` | 466MB | real-time+ | good | General use |
-| `ggml-large-v3-turbo-q5_0.bin` | 548MB | TBD | best? | Accuracy-first, needs testing |
+| Model | Size | Vulkan (890M) | CPU (24T) | Quality | Notes |
+|---|---|---|---|---|---|
+| `ggml-tiny.bin` | 75MB | fast | fast | poor | Low-power machines |
+| `ggml-base.bin` | 142MB | fast | fast | fair | Fast iteration/testing |
+| `ggml-small.bin` | 466MB | fast | ~real-time | good | General use |
+| `ggml-large-v3-turbo-q5_0.bin` | 548MB | Δ3.0s/step | too slow | good | Best tested so far |
 
 Default: auto-selects the largest model present in `models/`.
+
+### Findings
+
+- **Turbo q5 on Vulkan is the sweet spot**: Δ3.0s/step on Radeon 890M, good Portuguese accuracy with `--lang pt`.
+- **CPU cannot keep up with turbo**: 12-15s per 3s step even with all 24 threads. CPU is viable only with smaller models (base, small).
+- **Language auto-detect is unreliable for Portuguese**: 25-30% misdetection (Spanish, French, German, English). Use `--lang pt` explicitly.
+- **Performance power profile recommended**: laptop mode works but performance profile gives the iGPU more thermal headroom.
+- **GPU at 100% is expected**: Vulkan shaders (clip rectangle, shader interpolator) saturate the iGPU during encode. This is fine — the 890M is shared with display compositor but doesn't cause visible issues in performance profile.
 
 ## Task Breakdown
 
@@ -137,18 +147,21 @@ Default: auto-selects the largest model present in `models/`.
 - [x] Per-process audio routing via PIPEWIRE_NODE (no system-wide mutation)
 - [x] Hallucination filtering (non-Latin, known phrases)
 - [x] Timestamp prefixes on output for latency visibility
-- [x] Tuned streaming params (2s step, 5s window)
+- [x] Tuned streaming params (3s step, 8s window, 200ms keep)
 - [x] Tested on hardware — transcription works (en + pt)
 - [x] GitHub repo + license
 
 ### Phase 2 — Quality + latency ← CURRENT
 
-- [ ] Test large-v3-turbo-q5_0 model (accuracy vs speed tradeoff)
-- [ ] Test Vulkan GPU inference (Radeon 890M) vs CPU
-- [ ] Tune step/length for optimal latency/accuracy tradeoff
-- [ ] Measure and log actual audio-to-text latency
+- [x] Test large-v3-turbo-q5_0 model — good quality, Δ3.0s on Vulkan
+- [x] Test Vulkan GPU vs CPU — Vulkan required for turbo, CPU too slow (12-15s/step)
+- [x] Tune step/length — 3000/8000 works, needs deeper understanding
+- [x] Per-step delta timing (Δ) in output for latency visibility
+- [x] `--cpu` flag to disable Vulkan when needed
+- [x] Better Portuguese accuracy — `--lang pt` explicit, auto-detect too unreliable
+- [ ] Understand step/length/keep interaction, find optimal values
+- [ ] Explore alternative/newer whisper models
 - [ ] Evaluate whisper-stream VAD mode vs step mode
-- [ ] Better Portuguese accuracy (explicit --lang pt vs auto)
 
 ### Phase 3 — Clipboard + toggle UX
 

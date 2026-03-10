@@ -22,6 +22,7 @@ func main() {
 	lang := flag.String("lang", "auto", "language code (auto, en, pt, etc.)")
 	device := flag.String("device", "", "audio source: PipeWire node ID or substring match on name/description")
 	outFile := flag.String("file", "", "also write output to this file (append mode)")
+	cpuOnly := flag.Bool("cpu", false, "disable GPU inference, use CPU only")
 	listDevices := flag.Bool("list-devices", false, "list audio sources and exit")
 	flag.Parse()
 
@@ -41,7 +42,7 @@ func main() {
 		*model = detectModel()
 	}
 
-	threads := clamp(runtime.NumCPU()/2, 1, 8)
+	threads := runtime.NumCPU()
 
 	streamBin, err := findStreamBinary()
 	if err != nil {
@@ -53,9 +54,13 @@ func main() {
 		log.Fatal(err)
 	}
 
+	inference := "gpu"
+	if *cpuOnly {
+		inference = "cpu"
+	}
 	fmt.Fprintf(os.Stderr, "dictate: mic [%d] %s\n", mic.ID, mic.Description)
 	fmt.Fprintf(os.Stderr, "dictate: model %s\n", filepath.Base(*model))
-	fmt.Fprintf(os.Stderr, "dictate: lang=%s threads=%d\n", *lang, threads)
+	fmt.Fprintf(os.Stderr, "dictate: lang=%s threads=%d inference=%s\n", *lang, threads, inference)
 
 	// Always write to stdout. Optionally tee to a file.
 	var sink output.Sink = output.StdoutSink{}
@@ -68,7 +73,7 @@ func main() {
 		sink = output.NewMultiSink(output.StdoutSink{}, fsink)
 	}
 
-	proc := whisper.NewProcess(streamBin, *model, *lang, threads, mic.ID, sink.Write)
+	proc := whisper.NewProcess(streamBin, *model, *lang, threads, mic.ID, *cpuOnly, sink.Write)
 
 	if err := proc.Start(); err != nil {
 		log.Fatalf("start whisper: %v", err)
