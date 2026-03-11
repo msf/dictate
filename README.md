@@ -177,8 +177,10 @@ code path (whisper-stream + dictate), not whisper-cli, to avoid drift.
 
 - [ ] Virtual PipeWire source: `pw-cat --playback` injects WAV into a virtual node,
       `whisper-stream` captures from it via `PIPEWIRE_NODE` — same SDL2 path as production
-- [ ] Equivalence validation: record live mic to WAV while whisper-stream runs,
-      replay WAV through virtual source, compare outputs to prove the paths match
+- [ ] Equivalence validation (two directions):
+      Forward: WAV → pw-cat → whisper-stream → dictate (synthetic replay)
+      Reverse: mic → record WAV + run dictate simultaneously → feed WAV to whisper-cli
+      If outputs diverge, our integration stack is losing/corrupting audio
 - [ ] WAV test corpus: known Portuguese + English audio with expected transcripts
 - [ ] Benchmark runner: sweep model × quantization × step × length × ac × threads
 - [ ] Score with word error rate (WER) against expected output
