@@ -165,8 +165,20 @@ Default: auto-selects the largest model present in `models/`.
 - [x] `--cpu` flag to disable Vulkan when needed
 - [x] Better Portuguese accuracy — `--lang pt` explicit, auto-detect too unreliable
 - [ ] Understand step/length/keep interaction, find optimal values
+- [ ] Test `-ac 768` (audio context limit) — used by whisper.cpp author for better perf
 - [ ] Explore alternative/newer whisper models
+- [ ] Try quantized medium model (medium-q5 ~250MB, possibly faster than turbo-q5)
 - [ ] Evaluate whisper-stream VAD mode vs step mode
+
+### Phase 2.5 — Benchmark harness
+
+Automated search for optimal model + settings. Deterministic, repeatable.
+
+- [ ] Build `whisper-cli` in Dockerfile (file input, not mic)
+- [ ] WAV test corpus: known Portuguese + English audio with expected transcripts
+- [ ] Benchmark runner: sweep model × quantization × step × length × ac × threads
+- [ ] Score with word error rate (WER) against expected output
+- [ ] Rank combos by accuracy × speed, find Pareto frontier
 
 ### Phase 3 — Clipboard + toggle UX
 
@@ -193,7 +205,8 @@ Default: auto-selects the largest model present in `models/`.
 
 ```
 dictate/
-├── DESIGN.md
+├── README.md
+├── AGENTS.md
 ├── LICENSE
 ├── Dockerfile
 ├── Makefile
