@@ -172,9 +172,13 @@ Default: auto-selects the largest model present in `models/`.
 
 ### Phase 2.5 — Benchmark harness
 
-Automated search for optimal model + settings. Deterministic, repeatable.
+Automated search for optimal model + settings. Must exercise the exact production
+code path (whisper-stream + dictate), not whisper-cli, to avoid drift.
 
-- [ ] Build `whisper-cli` in Dockerfile (file input, not mic)
+- [ ] Virtual PipeWire source: `pw-cat --playback` injects WAV into a virtual node,
+      `whisper-stream` captures from it via `PIPEWIRE_NODE` — same SDL2 path as production
+- [ ] Equivalence validation: record live mic to WAV while whisper-stream runs,
+      replay WAV through virtual source, compare outputs to prove the paths match
 - [ ] WAV test corpus: known Portuguese + English audio with expected transcripts
 - [ ] Benchmark runner: sweep model × quantization × step × length × ac × threads
 - [ ] Score with word error rate (WER) against expected output
