@@ -60,11 +60,16 @@ Output: two binaries (`whisper-stream` ~45MB with Vulkan shaders, `dictate` ~2.5
 
 ### Runtime dependencies
 
-Target: Debian/Ubuntu. `whisper-stream` dynamically links against:
-- `libsdl2-2.0-0` (audio capture → PipeWire backend)
-- `libvulkan1` (GPU inference, optional — CPU fallback works)
+`whisper-stream` dynamically links against SDL2 and Vulkan. The Go binary is statically linked.
 
-Installed once via `scripts/install-runtime.sh`. The Go binary is statically linked.
+| Dep | Debian/Ubuntu | Fedora | Arch |
+|---|---|---|---|
+| SDL2 (audio capture) | `libsdl2-2.0-0` | `SDL2` | `sdl2` |
+| Vulkan (GPU, optional) | `libvulkan1` | `vulkan-loader` | `vulkan-icd-loader` |
+
+Debian/Ubuntu: `sudo ./scripts/install-runtime.sh`
+Fedora: `sudo dnf install SDL2 vulkan-loader`
+Arch: `sudo pacman -S sdl2 vulkan-icd-loader`
 
 ### Output parsing
 
