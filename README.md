@@ -103,15 +103,21 @@ Unix signals. Sway keybinding sends `pkill -USR1 dictate`:
 
 ```
 dictate [--model path] [--lang auto|en|pt] [--device ID|name] [--file path]
-        [--cpu] [--list-devices]
+        [--cpu] [--list-devices] [--pw-node ID]
+        [--step ms] [--length ms] [--keep ms] [--ac N]
 ```
 
 - `--model`: path to ggml model. Default: largest `ggml-*.bin` in `models/`
 - `--lang`: language for transcription. Default: `auto`
 - `--device`: PipeWire node ID or name substring. Default: auto-detect best mic
+- `--pw-node`: PipeWire node ID, bypasses mic detection (for benchmarks / direct control)
 - `--file`: also tee output to a file (append mode)
 - `--cpu`: disable GPU (Vulkan) inference, use CPU only
 - `--list-devices`: print audio sources and exit
+- `--step`: inference interval in ms. Default: `3000`
+- `--length`: audio window length in ms. Default: `8000`
+- `--keep`: audio context kept between windows in ms. Default: `200`
+- `--ac`: audio context limit (0 = whisper default). Default: `0`
 
 Output goes to **stdout** by default. All log/diagnostic output goes to stderr.
 
@@ -172,18 +178,19 @@ Default: auto-selects the largest model present in `models/`.
 
 ### Phase 2.5 — Benchmark harness
 
-Automated search for optimal model + settings. Must exercise the exact production
-code path (whisper-stream + dictate), not whisper-cli, to avoid drift.
+Automated search for optimal model + settings. Exercises the exact production
+code path (whisper-stream + dictate via virtual PipeWire source), not whisper-cli.
 
-- [ ] Virtual PipeWire source: `pw-cat --playback` injects WAV into a virtual node,
-      `whisper-stream` captures from it via `PIPEWIRE_NODE` — same SDL2 path as production
-- [ ] Equivalence validation (two directions):
-      Forward: WAV → pw-cat → whisper-stream → dictate (synthetic replay)
-      Reverse: mic → record WAV + run dictate simultaneously → feed WAV to whisper-cli
-      If outputs diverge, our integration stack is losing/corrupting audio
-- [ ] WAV test corpus: known Portuguese + English audio with expected transcripts
-- [ ] Benchmark runner: sweep model × quantization × step × length × ac × threads
-- [ ] Score with word error rate (WER) against expected output
+- [x] Parameterize streaming params (step/length/keep/ac) as CLI flags
+- [x] `--pw-node` flag to bypass mic detection (direct PipeWire node ID)
+- [x] Virtual PipeWire source: `pactl load-module module-null-sink` creates virtual
+      sink, `pw-cat --playback` injects WAV, whisper-stream captures from monitor
+- [x] Benchmark runner (`cmd/bench`): sweep step × length × keep × ac combos
+- [x] WER scoring against reference transcripts
+- [x] WAV test corpus: JFK sample from whisper.cpp (`make corpus`)
+- [ ] Test the pipeline end-to-end (virtual source → whisper-stream → dictate → WER)
+- [ ] Add Portuguese corpus (record or download from Common Voice)
+- [ ] Equivalence validation: compare virtual replay vs live mic on same audio
 - [ ] Rank combos by accuracy × speed, find Pareto frontier
 
 ### Phase 3 — Clipboard + toggle UX
@@ -221,15 +228,19 @@ dictate/
 ├── scripts/
 │   └── install-runtime.sh
 ├── cmd/
-│   └── dictate/
-│       └── main.go
+│   ├── dictate/
+│   │   └── main.go
+│   └── bench/
+│       └── main.go          # benchmark runner (WER scoring, param sweep)
 ├── internal/
 │   ├── audio/
-│   │   └── detect.go       # PipeWire mic detection
+│   │   └── detect.go        # PipeWire mic detection
 │   ├── whisper/
-│   │   └── process.go      # whisper-stream subprocess + parser
+│   │   └── process.go       # whisper-stream subprocess + parser
 │   └── output/
-│       └── file.go          # Sink interface: stdout, file, multi
-├── bin/                      # build output (gitignored)
-└── models/                   # downloaded models (gitignored)
+│       └── file.go           # Sink interface: stdout, file, multi
+├── bench/
+│   └── corpus/               # test WAV + reference transcripts (WAVs gitignored)
+├── bin/                       # build output (gitignored)
+└── models/                    # downloaded models (gitignored)
 ```

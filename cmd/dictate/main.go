@@ -24,14 +24,18 @@ func main() {
 	outFile := flag.String("file", "", "also write output to this file (append mode)")
 	cpuOnly := flag.Bool("cpu", false, "disable GPU inference, use CPU only")
 	listDevices := flag.Bool("list-devices", false, "list audio sources and exit")
+	pwNode := flag.Int("pw-node", 0, "PipeWire node ID (bypasses mic detection)")
+	step := flag.Int("step", 3000, "inference step interval in ms")
+	length := flag.Int("length", 8000, "audio window length in ms")
+	keep := flag.Int("keep", 200, "audio context kept between windows in ms")
+	ac := flag.Int("ac", 0, "audio context limit (0 = whisper default)")
 	flag.Parse()
 
-	sources, err := audio.ListSources()
-	if err != nil {
-		log.Fatalf("mic detection: %v", err)
-	}
-
 	if *listDevices {
+		sources, err := audio.ListSources()
+		if err != nil {
+			log.Fatalf("mic detection: %v", err)
+		}
 		for _, s := range sources {
 			fmt.Fprintf(os.Stdout, "[%d] %s\n     %s\n", s.ID, s.Description, s.Name)
 		}
@@ -49,18 +53,34 @@ func main() {
 		log.Fatal(err)
 	}
 
-	mic, err := audio.FindSource(sources, *device)
-	if err != nil {
-		log.Fatal(err)
+	var micID int
+	if *pwNode > 0 {
+		micID = *pwNode
+		fmt.Fprintf(os.Stderr, "dictate: pw-node %d (direct)\n", micID)
+	} else {
+		sources, err := audio.ListSources()
+		if err != nil {
+			log.Fatalf("mic detection: %v", err)
+		}
+		mic, err := audio.FindSource(sources, *device)
+		if err != nil {
+			log.Fatal(err)
+		}
+		micID = mic.ID
+		fmt.Fprintf(os.Stderr, "dictate: mic [%d] %s\n", mic.ID, mic.Description)
 	}
 
 	inference := "gpu"
 	if *cpuOnly {
 		inference = "cpu"
 	}
-	fmt.Fprintf(os.Stderr, "dictate: mic [%d] %s\n", mic.ID, mic.Description)
 	fmt.Fprintf(os.Stderr, "dictate: model %s\n", filepath.Base(*model))
 	fmt.Fprintf(os.Stderr, "dictate: lang=%s threads=%d inference=%s\n", *lang, threads, inference)
+	fmt.Fprintf(os.Stderr, "dictate: step=%dms length=%dms keep=%dms", *step, *length, *keep)
+	if *ac > 0 {
+		fmt.Fprintf(os.Stderr, " ac=%d", *ac)
+	}
+	fmt.Fprintf(os.Stderr, "\n")
 
 	// Always write to stdout. Optionally tee to a file.
 	var sink output.Sink = output.StdoutSink{}
@@ -73,7 +93,19 @@ func main() {
 		sink = output.NewMultiSink(output.StdoutSink{}, fsink)
 	}
 
-	proc := whisper.NewProcess(streamBin, *model, *lang, threads, mic.ID, *cpuOnly, sink.Write)
+	proc := whisper.NewProcess(whisper.Config{
+		StreamBin: streamBin,
+		Model:     *model,
+		Lang:      *lang,
+		Threads:   threads,
+		PwNodeID:  micID,
+		CPUOnly:   *cpuOnly,
+		OnText:    sink.Write,
+		Step:      *step,
+		Length:    *length,
+		Keep:      *keep,
+		AC:        *ac,
+	})
 
 	if err := proc.Start(); err != nil {
 		log.Fatalf("start whisper: %v", err)

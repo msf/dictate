@@ -15,33 +15,46 @@ import (
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
+// Config holds all parameters for a whisper-stream subprocess.
+type Config struct {
+	StreamBin string
+	Model     string
+	Lang      string
+	Threads   int
+	PwNodeID  int
+	CPUOnly   bool
+	OnText    func(string)
+
+	// Streaming parameters (ms). Zero means use default.
+	Step   int // inference interval (default 3000)
+	Length int // audio window (default 8000)
+	Keep   int // context kept between windows (default 200)
+	AC     int // audio context limit (0 = whisper default)
+}
+
 // Process manages a whisper-stream subprocess.
 type Process struct {
-	streamBin string
-	model     string
-	lang      string
-	threads   int
-	pwNodeID  int
-	cpuOnly   bool
-	onText    func(string)
+	cfg       Config
 	startTime time.Time
 	lastEmit  time.Time
+	lastText  string
 
 	mu      sync.Mutex
 	cmd     *exec.Cmd
 	running bool
 }
 
-func NewProcess(streamBin, model, lang string, threads, pwNodeID int, cpuOnly bool, onText func(string)) *Process {
-	return &Process{
-		streamBin: streamBin,
-		model:     model,
-		lang:      lang,
-		threads:   threads,
-		pwNodeID:  pwNodeID,
-		cpuOnly:   cpuOnly,
-		onText:    onText,
+func NewProcess(cfg Config) *Process {
+	if cfg.Step == 0 {
+		cfg.Step = 3000
 	}
+	if cfg.Length == 0 {
+		cfg.Length = 8000
+	}
+	if cfg.Keep == 0 {
+		cfg.Keep = 200
+	}
+	return &Process{cfg: cfg}
 }
 
 func (p *Process) Start() error {
@@ -74,22 +87,25 @@ func (p *Process) Toggle() {
 
 func (p *Process) startLocked() error {
 	args := []string{
-		"-m", p.model,
-		"-l", p.lang,
-		"-t", fmt.Sprintf("%d", p.threads),
-		"--step", "3000",
-		"--length", "8000",
-		"--keep", "200",
+		"-m", p.cfg.Model,
+		"-l", p.cfg.Lang,
+		"-t", fmt.Sprintf("%d", p.cfg.Threads),
+		"--step", fmt.Sprintf("%d", p.cfg.Step),
+		"--length", fmt.Sprintf("%d", p.cfg.Length),
+		"--keep", fmt.Sprintf("%d", p.cfg.Keep),
 	}
-	if p.cpuOnly {
+	if p.cfg.AC > 0 {
+		args = append(args, "-ac", fmt.Sprintf("%d", p.cfg.AC))
+	}
+	if p.cfg.CPUOnly {
 		args = append(args, "-ng")
 	}
-	p.cmd = exec.Command(p.streamBin, args...)
+	p.cmd = exec.Command(p.cfg.StreamBin, args...)
 
 	// Route SDL2 audio capture to our chosen PipeWire node.
 	// Per-process only — no system-wide side effects.
-	if p.pwNodeID > 0 {
-		p.cmd.Env = append(os.Environ(), fmt.Sprintf("PIPEWIRE_NODE=%d", p.pwNodeID))
+	if p.cfg.PwNodeID > 0 {
+		p.cmd.Env = append(os.Environ(), fmt.Sprintf("PIPEWIRE_NODE=%d", p.cfg.PwNodeID))
 	}
 
 	stdout, err := p.cmd.StdoutPipe()
@@ -100,6 +116,7 @@ func (p *Process) startLocked() error {
 	p.cmd.Stderr = os.Stderr
 	p.startTime = time.Now()
 	p.lastEmit = p.startTime
+	p.lastText = ""
 
 	if err := p.cmd.Start(); err != nil {
 		return fmt.Errorf("start whisper-stream: %w", err)
@@ -114,12 +131,17 @@ func (p *Process) startLocked() error {
 			if text == "" || isHallucination(text) {
 				continue
 			}
+			text = trimLeadingOverlap(p.lastText, text)
+			if text == "" {
+				continue
+			}
+			p.lastText = text
 			now := time.Now()
 			elapsed := now.Sub(p.startTime).Truncate(100 * time.Millisecond)
 			delta := now.Sub(p.lastEmit).Truncate(100 * time.Millisecond)
 			p.lastEmit = now
 			stamped := fmt.Sprintf("[%s Δ%.1fs] %s", formatDuration(elapsed), delta.Seconds(), text)
-			p.onText(stamped)
+			p.cfg.OnText(stamped)
 		}
 		p.mu.Lock()
 		p.running = false
@@ -153,6 +175,55 @@ func parseLine(raw string) string {
 		return ""
 	}
 	return clean
+}
+
+func trimLeadingOverlap(prev, curr string) string {
+	if prev == "" || curr == "" {
+		return curr
+	}
+	prevWords := strings.Fields(prev)
+	currWords := strings.Fields(curr)
+	if len(prevWords) == 0 || len(currWords) == 0 {
+		return curr
+	}
+
+	max := len(prevWords)
+	if len(currWords) < max {
+		max = len(currWords)
+	}
+
+	overlap := 0
+	for k := max; k >= 1; k-- {
+		ok := true
+		for i := 0; i < k; i++ {
+			if normalizeToken(prevWords[len(prevWords)-k+i]) != normalizeToken(currWords[i]) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			overlap = k
+			break
+		}
+	}
+
+	if overlap == 0 {
+		return curr
+	}
+	if overlap >= len(currWords) {
+		return ""
+	}
+	return strings.Join(currWords[overlap:], " ")
+}
+
+func normalizeToken(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '\'' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // isHallucination detects whisper artifacts from silence/noise.

@@ -1,0 +1,9 @@
+okay, so I want you to help me on the design and breakdown of the migration of the
+datashare prefect flow to the dune control plane, to dune cp
+so the first phase is just a refactor of the prefect code, the python code, so that we
+split out two distinct new flows and APIS for them so that they are more straightforward , less crazy, more predictable
+this is basically just refactoring, ahhhmm
+it is going to maintain the existing flow with automagical characteristics with an initial planner that infers the behaviour that the pipeline should have
+and then is going to have separately two new entry points, one if for full reflesh  refreshes of tables, the other one is for incremental tables updates.
+and those are  going to be more predicatable and deterministic with simpler apis. and they do not use the planning inference that currently exists.
+so that is one of the bigger changes
