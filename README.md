@@ -136,12 +136,63 @@ Typing into the focused window on Wayland:
 dictate --output type --silence-timeout 15s
 ```
 
+One-key toggle for a focused input box:
+
+```bash
+scripts/toggle-dictate.sh start --lang en
+scripts/toggle-dictate.sh stop
+scripts/toggle-dictate.sh status
+```
+
+For sway, bind one shortcut to the toggle script:
+
+```bash
+bindsym $mod+d exec --no-startup-id "$HOME/play/dictate/scripts/toggle-dictate.sh" toggle --lang en
+```
+
+For your laptop media keys, prefer the display-toggle button on `F9` over airplane mode on `F10`.
+Common keysyms are:
+
+```bash
+bindsym XF86Display exec --no-startup-id "$HOME/play/dictate/scripts/toggle-dictate.sh" toggle --lang en
+bindsym XF86RFKill exec --no-startup-id "$HOME/play/dictate/scripts/toggle-dictate.sh" toggle --lang en
+```
+
+If the firmware reports a different keysym, check it first with:
+
+```bash
+scripts/read-keysym.sh
+```
+
+Then press the hardware key once and bind the reported keysym instead.
+
+The toggle script writes state under `${XDG_RUNTIME_DIR}/dictate/` (`dictate.pid`, `dictate.log`).
+Use the shortcut again for a hard stop. This is more reliable than silence timeout when nearby voices keep the model active.
+
 Recommended model targets:
 
 ```bash
 make model-gpu        # ggml-large-v3-turbo-q5_0.bin
 make model-cpu-light  # ggml-medium-q5_0.bin
 make models-recommended
+```
+
+Single-command regression check for the default profile:
+
+```bash
+make integ-test
+```
+
+This runs a Go integration test that exercises the production-path benchmark with the
+current default settings and fails if:
+- median WER across repeated runs exceeds the configured threshold (default `18%`)
+- any run has to be force-killed instead of exiting cleanly
+- median headroom drops below the configured floor (default `500ms`)
+
+Override knobs if needed:
+
+```bash
+DICTATE_INTEG_REPEATS=3 DICTATE_INTEG_MAX_MEDIAN_WER=18 DICTATE_INTEG_MIN_MEDIAN_HEADROOM_MS=500 make integ-test
 ```
 
 ## Models
@@ -220,13 +271,13 @@ code path (whisper-stream + dictate via virtual PipeWire source), not whisper-cl
 ### Phase 3 — Toggle UX
 
 - [x] SIGUSR1 toggle documented
-- [ ] Sway keybinding config example
+- [x] Sway keybinding config example
 - [ ] Desktop notification on toggle (via `notify-send`)
 
 ### Phase 4 — Keystroke injection
 
-- [ ] `--output type` mode using `wtype` (Wayland keystroke injection, implemented but not yet verified here)
-- [ ] Works with terminals (types directly into focused window)
+- [x] `--output type` mode using `wtype` (Wayland keystroke injection)
+- [x] Works with terminals (types directly into focused window)
 - [ ] Works with neovim in insert mode
 
 ### Phase 5 — Polish + portability
@@ -255,13 +306,14 @@ dictate/
 │   │   └── main.go
 │   └── bench/
 │       └── main.go          # benchmark runner (WER scoring, param sweep)
-├── internal/
-│   ├── audio/
-│   │   └── detect.go        # PipeWire mic detection
-│   ├── whisper/
-│   │   └── process.go       # whisper-stream subprocess + parser
-│   └── output/
-│       └── file.go           # Sink interface: stdout, file, multi
+├── audio/
+│   └── detect.go             # PipeWire mic detection
+├── whisper/
+│   └── process.go            # whisper-stream subprocess + parser
+├── output/
+│   └── file.go               # sink fanout: stdout, file, wtype
+├── integ/
+│   └── bench_test.go         # production-path integration test
 ├── bench/
 │   └── corpus/               # test WAV + reference transcripts (WAVs gitignored)
 ├── bin/                       # main app binaries

@@ -13,9 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"dictate/internal/audio"
-	"dictate/internal/output"
-	"dictate/internal/whisper"
+	"dictate/audio"
+	"dictate/output"
+	"dictate/whisper"
 )
 
 func main() {

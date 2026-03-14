@@ -11,7 +11,7 @@
 
 - Production-path benchmark harness exists in `cmd/bench` and is committed.
 - Benchmark path is verified end to end: virtual PipeWire source -> `whisper-stream` -> `dictate` -> scored hypothesis.
-- Boundary duplication was reproduced at roughly step cadence and overlap trimming was added in `internal/whisper/process.go`.
+- Boundary duplication was reproduced at roughly step cadence and overlap trimming was added in `whisper/process.go`.
 - Bench now reports `WER`, `enc-ms`, `headroom`, and stop mode.
 - `ggml-medium.bin` has been downloaded to `models/ggml-medium.bin`.
 - App-direction shift: typed output into a focused input box is now the next product goal, not more benchmark-only work.
@@ -108,3 +108,5 @@ These still need one more round under synthetic system load before they should b
   - outputs per-run raw logs, a TSV, summaries, finalists, and a diary under `bench/results/overnight-*`
 - Launched an overnight GPU session: `bench/results/overnight-20260314-gpu-sweep/` with launcher log `bench/results/overnight-20260314-gpu-sweep.launch.log`.
 - Output fanout now carries both raw and annotated text, so typed sinks can use clean text while stdout/files can keep timestamps.
+- Added `scripts/toggle-dictate.sh` so one keyboard shortcut can start dictation into the focused window and the same shortcut can stop it reliably. Manual stop is now the primary control path; silence timeout is secondary only.
+- Added a Go integration test (`integ/bench_test.go`) and `make integ-test` as the single default-profile regression check against corpus WER, headroom, and clean shutdown.

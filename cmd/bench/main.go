@@ -51,6 +51,8 @@ type result struct {
 var (
 	timestampRe    = regexp.MustCompile(`^\[\d{2}:\d{2}\.\d Δ[\d.]+s\] `)
 	encodeTimingRe = regexp.MustCompile(`whisper_print_timings:\s+encode time =\s+([\d.]+) ms /\s+\d+ runs \(\s+([\d.]+) ms per run\)`)
+	pwLinkPortRe   = regexp.MustCompile(`^\s*\d+\s+(\S+:\S+)$`)
+	pwLinkEdgeRe   = regexp.MustCompile(`^\s*\d+\s+\|->\s+\d+\s+(\S+:\S+)$`)
 )
 
 func main() {
@@ -224,21 +226,19 @@ func rewireCapture(captureNode, sourceNode string) error {
 		return fmt.Errorf("pw-link -lI: %w", err)
 	}
 
-	// Parse pw-link output. Format:
-	//   output_port_name
-	//    -> input_port_name
 	var currentOutput string
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimRight(line, "\r")
-		if strings.HasPrefix(line, "   ") && strings.Contains(line, "-> ") {
-			inputPort := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-> "))
-			if strings.HasPrefix(inputPort, captureNode+":") {
-				// Disconnect this link.
+		if m := pwLinkPortRe.FindStringSubmatch(line); m != nil {
+			currentOutput = m[1]
+			continue
+		}
+		if m := pwLinkEdgeRe.FindStringSubmatch(line); m != nil {
+			inputPort := m[1]
+			if strings.HasPrefix(inputPort, captureNode+":") && currentOutput != "" {
 				fmt.Fprintf(os.Stderr, "bench: disconnect %s -> %s\n", currentOutput, inputPort)
 				_ = exec.Command("pw-link", "-d", currentOutput, inputPort).Run()
 			}
-		} else if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, " ") {
-			currentOutput = strings.TrimSpace(line)
 		}
 	}
 
