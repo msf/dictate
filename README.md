@@ -144,10 +144,14 @@ scripts/toggle-dictate.sh stop
 scripts/toggle-dictate.sh status
 ```
 
-For sway, bind one shortcut to the toggle script:
+All development and testing was done on sway (Regolith/Wayland). The core
+pipeline (whisper-stream → dictate → wtype) works on any Wayland compositor.
+Only the keybinding setup differs per desktop environment.
+
+### Sway / i3-sway
 
 ```bash
-bindsym $mod+d exec --no-startup-id "$HOME/play/dictate/scripts/toggle-dictate.sh" toggle --lang en
+bindsym $mod+d exec --no-startup-id "$HOME/play/dictate/scripts/toggle-dictate.sh" toggle
 ```
 
 For laptop media keys (e.g. the display-toggle button on F9), the firmware
@@ -156,17 +160,47 @@ keysym. On Framework laptops with fn-row defaulting to media functions,
 F9 (display icon) sends `Super+P`:
 
 ```bash
-bindsym $mod+p exec --no-startup-id "$HOME/play/dictate/scripts/toggle-dictate.sh" toggle --lang en
+bindsym $mod+p exec --no-startup-id "$HOME/play/dictate/scripts/toggle-dictate.sh" toggle
 ```
 
 If your firmware emits a raw XF86 keysym instead, use that directly:
 
 ```bash
-bindsym XF86Display exec --no-startup-id "$HOME/play/dictate/scripts/toggle-dictate.sh" toggle --lang en
+bindsym XF86Display exec --no-startup-id "$HOME/play/dictate/scripts/toggle-dictate.sh" toggle
 ```
 
 To check what your key actually sends, use `wev -f wl_keyboard` and look
 at the `sym:` line for the pressed event.
+
+### Hyprland
+
+```
+bind = SUPER, P, exec, ~/play/dictate/scripts/toggle-dictate.sh toggle
+```
+
+### GNOME (Wayland)
+
+Settings → Keyboard → Custom Shortcuts, or via CLI:
+
+```bash
+# create the shortcut
+dconf write /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/dictate/name "'Dictate Toggle'"
+dconf write /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/dictate/command "'/path/to/dictate/scripts/toggle-dictate.sh toggle'"
+dconf write /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/dictate/binding "'<Super>p'"
+
+# register it
+dconf write /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings "['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/dictate/']"
+```
+
+### KDE Plasma (Wayland)
+
+System Settings → Shortcuts → Custom Shortcuts → Add new → Command/URL.
+Set the trigger key and point the action at `toggle-dictate.sh toggle`.
+
+### X11
+
+`wtype` only works on Wayland. X11 would need `xdotool type` as the
+keystroke backend, which is not yet implemented.
 
 The toggle script writes state under `${XDG_RUNTIME_DIR}/dictate/` (`dictate.pid`, `dictate.log`).
 Use the shortcut again for a hard stop. This is more reliable than silence timeout when nearby voices keep the model active.
