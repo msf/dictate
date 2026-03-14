@@ -150,21 +150,23 @@ For sway, bind one shortcut to the toggle script:
 bindsym $mod+d exec --no-startup-id "$HOME/play/dictate/scripts/toggle-dictate.sh" toggle --lang en
 ```
 
-For your laptop media keys, prefer the display-toggle button on `F9` over airplane mode on `F10`.
-Common keysyms are:
+For laptop media keys (e.g. the display-toggle button on F9), the firmware
+often translates the keypress into a modifier combo rather than an XF86
+keysym. On Framework laptops with fn-row defaulting to media functions,
+F9 (display icon) sends `Super+P`:
+
+```bash
+bindsym $mod+p exec --no-startup-id "$HOME/play/dictate/scripts/toggle-dictate.sh" toggle --lang en
+```
+
+If your firmware emits a raw XF86 keysym instead, use that directly:
 
 ```bash
 bindsym XF86Display exec --no-startup-id "$HOME/play/dictate/scripts/toggle-dictate.sh" toggle --lang en
-bindsym XF86RFKill exec --no-startup-id "$HOME/play/dictate/scripts/toggle-dictate.sh" toggle --lang en
 ```
 
-If the firmware reports a different keysym, check it first with:
-
-```bash
-scripts/read-keysym.sh
-```
-
-Then press the hardware key once and bind the reported keysym instead.
+To check what your key actually sends, use `wev -f wl_keyboard` and look
+at the `sym:` line for the pressed event.
 
 The toggle script writes state under `${XDG_RUNTIME_DIR}/dictate/` (`dictate.pid`, `dictate.log`).
 Use the shortcut again for a hard stop. This is more reliable than silence timeout when nearby voices keep the model active.

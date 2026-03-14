@@ -6,6 +6,7 @@ STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/dictate"
 PIDFILE="$STATE_DIR/dictate.pid"
 LOGFILE="$STATE_DIR/dictate.log"
 DICTATE_BIN="${DICTATE_BIN:-$ROOT_DIR/bin/dictate}"
+DEFAULT_ARGS=(--lang en --model "$ROOT_DIR/models/ggml-large-v3-turbo-q5_0.bin")
 
 mkdir -p "$STATE_DIR"
 
@@ -30,7 +31,7 @@ start_dictate() {
         exit 0
     fi
 
-    nohup "$DICTATE_BIN" --output type "$@" >>"$LOGFILE" 2>&1 &
+    nohup "$DICTATE_BIN" --output type "${DEFAULT_ARGS[@]}" "$@" >>"$LOGFILE" 2>&1 &
     local pid=$!
     echo "$pid" >"$PIDFILE"
     echo "started dictate (pid $pid)"
