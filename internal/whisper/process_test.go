@@ -38,3 +38,25 @@ func TestTrimLeadingOverlap(t *testing.T) {
 		})
 	}
 }
+
+func TestStreamArgsPreserveZeroKeep(t *testing.T) {
+	args := streamArgs(Config{
+		Model:   "model.bin",
+		Lang:    "en",
+		Threads: 8,
+		Step:    3000,
+		Length:  6000,
+		Keep:    0,
+		AC:      0,
+	})
+
+	want := []string{"-m", "model.bin", "-l", "en", "-t", "8", "--step", "3000", "--length", "6000", "--keep", "0"}
+	if len(args) != len(want) {
+		t.Fatalf("streamArgs() len = %d, want %d: %v", len(args), len(want), args)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("streamArgs()[%d] = %q, want %q (all args: %v)", i, args[i], want[i], args)
+		}
+	}
+}

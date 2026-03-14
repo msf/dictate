@@ -1,8 +1,9 @@
 BIN_DIR   := bin
 MODEL_DIR := models
 MODEL_URL := https://huggingface.co/ggerganov/whisper.cpp/resolve/main
+DOCKER_BUILD := DOCKER_BUILDKIT=1 docker build
 
-.PHONY: all whisper build bench record models lint fmt vet run clean
+.PHONY: all whisper whisper-generic whisper-native build bench record models lint fmt vet run clean
 
 all: whisper build models
 
@@ -11,8 +12,16 @@ all: whisper build models
 whisper: $(BIN_DIR)/whisper-stream $(BIN_DIR)/dictate
 
 $(BIN_DIR)/whisper-stream $(BIN_DIR)/dictate: Dockerfile go.mod $(wildcard cmd/**/*.go internal/**/*.go)
-	DOCKER_BUILDKIT=1 docker build --output type=local,dest=$(BIN_DIR)/ .
+	$(DOCKER_BUILD) --build-arg GGML_NATIVE=ON --output type=local,dest=$(BIN_DIR)/ .
 	@echo "built: $(BIN_DIR)/whisper-stream $(BIN_DIR)/dictate"
+
+whisper-native:
+	$(DOCKER_BUILD) --build-arg GGML_NATIVE=ON --output type=local,dest=bin-native/ .
+	@echo "built: bin-native/whisper-stream bin-native/dictate"
+
+whisper-generic:
+	$(DOCKER_BUILD) --build-arg GGML_NATIVE=OFF --output type=local,dest=bin-generic/ .
+	@echo "built: bin-generic/whisper-stream bin-generic/dictate"
 
 # --- Build (host Go, fast iteration) ---
 

@@ -25,10 +25,11 @@ type Config struct {
 	CPUOnly   bool
 	OnText    func(string)
 
-	// Streaming parameters (ms). Zero means use default.
-	Step   int // inference interval (default 3000)
-	Length int // audio window (default 8000)
-	Keep   int // context kept between windows (default 200)
+	// Streaming parameters (ms). Step/Length default only when unset.
+	// Keep=0 is meaningful and must be preserved.
+	Step   int // inference interval (default 3000 when <= 0)
+	Length int // audio window (default 8000 when <= 0)
+	Keep   int // context kept between windows (default 200 only when < 0)
 	AC     int // audio context limit (0 = whisper default)
 }
 
@@ -51,7 +52,7 @@ func NewProcess(cfg Config) *Process {
 	if cfg.Length == 0 {
 		cfg.Length = 8000
 	}
-	if cfg.Keep == 0 {
+	if cfg.Keep < 0 {
 		cfg.Keep = 200
 	}
 	return &Process{cfg: cfg}
@@ -86,20 +87,8 @@ func (p *Process) Toggle() {
 }
 
 func (p *Process) startLocked() error {
-	args := []string{
-		"-m", p.cfg.Model,
-		"-l", p.cfg.Lang,
-		"-t", fmt.Sprintf("%d", p.cfg.Threads),
-		"--step", fmt.Sprintf("%d", p.cfg.Step),
-		"--length", fmt.Sprintf("%d", p.cfg.Length),
-		"--keep", fmt.Sprintf("%d", p.cfg.Keep),
-	}
-	if p.cfg.AC > 0 {
-		args = append(args, "-ac", fmt.Sprintf("%d", p.cfg.AC))
-	}
-	if p.cfg.CPUOnly {
-		args = append(args, "-ng")
-	}
+	args := streamArgs(p.cfg)
+	fmt.Fprintf(os.Stderr, "dictate: whisper-stream args=%s\n", strings.Join(args, " "))
 	p.cmd = exec.Command(p.cfg.StreamBin, args...)
 
 	// Route SDL2 audio capture to our chosen PipeWire node.
@@ -149,6 +138,24 @@ func (p *Process) startLocked() error {
 	}()
 
 	return nil
+}
+
+func streamArgs(cfg Config) []string {
+	args := []string{
+		"-m", cfg.Model,
+		"-l", cfg.Lang,
+		"-t", fmt.Sprintf("%d", cfg.Threads),
+		"--step", fmt.Sprintf("%d", cfg.Step),
+		"--length", fmt.Sprintf("%d", cfg.Length),
+		"--keep", fmt.Sprintf("%d", cfg.Keep),
+	}
+	if cfg.AC > 0 {
+		args = append(args, "-ac", fmt.Sprintf("%d", cfg.AC))
+	}
+	if cfg.CPUOnly {
+		args = append(args, "-ng")
+	}
+	return args
 }
 
 func (p *Process) stopLocked() {

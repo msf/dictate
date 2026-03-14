@@ -7,6 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ARG WHISPER_VERSION=master
+ARG GGML_NATIVE=ON
+ARG WHISPER_CMAKE_FLAGS=""
 RUN git clone --depth 1 --branch ${WHISPER_VERSION} \
     https://github.com/ggerganov/whisper.cpp /src/whisper.cpp
 
@@ -17,14 +19,16 @@ RUN cmake -B build \
     -DCMAKE_BUILD_TYPE=Release \
     -DWHISPER_SDL2=ON \
     -DGGML_VULKAN=ON \
+    -DGGML_NATIVE=${GGML_NATIVE} \
     -DBUILD_SHARED_LIBS=OFF \
+    ${WHISPER_CMAKE_FLAGS} \
     && cmake --build build --config Release -j$(nproc)
 
 # Verify the binary exists
 RUN test -f build/bin/whisper-stream && echo "whisper-stream built OK"
 
 # Stage 2: Build Go binary
-FROM golang:1.24 AS go-build
+FROM golang:1.26 AS go-build
 
 WORKDIR /src/dictate
 COPY go.mod ./
