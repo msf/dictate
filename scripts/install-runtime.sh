@@ -9,7 +9,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-DEPS=(libsdl2-2.0-0)
+DEPS=(libsdl2-2.0-0 wtype)
 
 # Vulkan runtime — optional, for GPU inference
 if ! dpkg -s libvulkan1 &>/dev/null; then

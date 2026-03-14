@@ -4,12 +4,12 @@ Voice-to-text for Linux terminals. Speak instead of type — into opencode, clau
 
 ## Goal
 
-A lightweight dictation tool that captures microphone audio, streams it through whisper.cpp for local speech recognition, and routes the transcribed text to a configurable output: stdout, file, clipboard, or direct keystroke injection.
+A lightweight dictation tool that captures microphone audio, streams it through whisper.cpp for local speech recognition, and routes the transcribed text to a configurable output: stdout, files, or direct keystroke injection.
 
 Primary use cases:
 - Dictate to a terminal running an AI coding assistant (opencode, claude-code, gpt-codex)
 - Dictate into neovim in insert mode
-- Dictate to clipboard for pasting anywhere
+- Dictate directly into the focused terminal or text box on Wayland
 
 Constraints:
 - Local inference only (whisper.cpp, no cloud APIs)
@@ -30,15 +30,15 @@ Constraints:
 │           dictate (Go binary)           │
 │  - parses stream stdout (strips ANSI)   │
 │  - filters hallucinations               │
-│  - timestamps each output line          │
+│  - keeps raw + annotated text streams   │
 │  - SIGUSR1 toggles start/stop           │
 │  - routes text to output sink(s)        │
 └──────────────────┬──────────────────────┘
                    │
-          ┌────────┼────────┐
-          ▼        ▼        ▼
-       stdout   wl-copy   wtype
-     (default) (clipboard) (keys)
+          ┌────────┼─────────┐
+          ▼        ▼         ▼
+       stdout   raw-file   wtype
+    (annotated)  (raw)    (keys)
        + optional --file tee
 ```
 
@@ -58,6 +58,9 @@ Docker multi-stage build. All build-time dependencies (gcc, cmake, libsdl2-dev, 
 
 Output: two binaries (`whisper-stream` ~45MB with Vulkan shaders, `dictate` ~2.5MB static Go).
 
+Normal app builds live in `bin/`. CPU-comparison variants from `make whisper-native` and
+`make whisper-generic` live in `.build/` so the main app path stays unambiguous.
+
 ### Runtime dependencies
 
 `whisper-stream` dynamically links against SDL2 and Vulkan. The Go binary is statically linked.
@@ -66,10 +69,11 @@ Output: two binaries (`whisper-stream` ~45MB with Vulkan shaders, `dictate` ~2.5
 |---|---|---|---|
 | SDL2 (audio capture) | `libsdl2-2.0-0` | `SDL2` | `sdl2` |
 | Vulkan (GPU, optional) | `libvulkan1` | `vulkan-loader` | `vulkan-icd-loader` |
+| wtype (typed output) | `wtype` | `wtype` | `wtype` |
 
 Debian/Ubuntu: `sudo ./scripts/install-runtime.sh`
 Fedora: `sudo dnf install SDL2 vulkan-loader`
-Arch: `sudo pacman -S sdl2 vulkan-icd-loader`
+Arch: `sudo pacman -S sdl2 vulkan-icd-loader wtype`
 
 ### Output parsing
 
@@ -85,13 +89,15 @@ The Go parser:
 
 ### Streaming parameters
 
-- `--step 3000` (3s): inference runs every 3 seconds
-- `--length 8000` (8s): each inference window is 8 seconds of audio
-- `--keep 200`: 200ms of audio context kept between windows
-- Encode time: ~2200ms/step on Radeon 890M Vulkan with large-v3-turbo-q5_0
-- With 3s step, ~800ms headroom per cycle (no audio drops)
+- Balanced default profile: `--step 2500 --length 5000 --keep 0 --ac 1280`
+- `--step 2500` (2.5s): inference runs every 2.5 seconds
+- `--length 5000` (5s): each inference window targets 5 seconds of audio
+- `--keep 0`: rely on text-side overlap trimming instead of forced audio overlap
+- `--ac 1280`: slightly reduced audio context, faster than full-context `1500` with little quality loss
+- Median encode time on Radeon 890M Vulkan: ~1106ms/step
+- Median headroom per cycle: ~1394ms (no audio drops in overnight sweep)
 
-Effective latency: **~3-4 seconds** from speech to text on stdout.
+Effective latency: **~2.5-3 seconds** from speech to text on stdout.
 
 ### Toggle mechanism
 
@@ -110,16 +116,33 @@ dictate [--model path] [--lang auto|en|pt] [--device ID|name] [--file path]
 - `--model`: path to ggml model. Default: largest `ggml-*.bin` in `models/`
 - `--lang`: language for transcription. Default: `auto`
 - `--device`: PipeWire node ID or name substring. Default: auto-detect best mic
+- `--output`: `stdout` or `type`. Default: `stdout`
 - `--pw-node`: PipeWire node ID, bypasses mic detection (for benchmarks / direct control)
 - `--file`: also tee output to a file (append mode)
+- `--raw-file`: also tee raw text chunks to a file (append mode, no timestamps)
 - `--cpu`: disable GPU (Vulkan) inference, use CPU only
 - `--list-devices`: print audio sources and exit
-- `--step`: inference interval in ms. Default: `3000`
-- `--length`: audio window length in ms. Default: `8000`
-- `--keep`: audio context kept between windows in ms. Default: `200`
-- `--ac`: audio context limit (0 = whisper default). Default: `0`
+- `--step`: inference interval in ms. Default: `2500`
+- `--length`: audio window length in ms. Default: `5000`
+- `--keep`: audio context kept between windows in ms. Default: `0`
+- `--ac`: audio context limit (0 = whisper default). Default: `1280`
+- `--silence-timeout`: stop after this much transcription silence. Example: `15s`
 
 Output goes to **stdout** by default. All log/diagnostic output goes to stderr.
+
+Typing into the focused window on Wayland:
+
+```bash
+dictate --output type --silence-timeout 15s
+```
+
+Recommended model targets:
+
+```bash
+make model-gpu        # ggml-large-v3-turbo-q5_0.bin
+make model-cpu-light  # ggml-medium-q5_0.bin
+make models-recommended
+```
 
 ## Models
 
@@ -130,14 +153,15 @@ Multilingual models (not `.en` variants) — supports Portuguese, English, and a
 | `ggml-tiny.bin` | 75MB | fast | fast | poor | Low-power machines |
 | `ggml-base.bin` | 142MB | fast | fast | fair | Fast iteration/testing |
 | `ggml-small.bin` | 466MB | fast | ~real-time | good | General use |
-| `ggml-large-v3-turbo-q5_0.bin` | 548MB | Δ3.0s/step | too slow | good | Best tested so far |
+| `ggml-large-v3-turbo-q5_0.bin` | 548MB | Δ2.5s/step | too slow | best | Best current default on GPU |
 
 Default: auto-selects the largest model present in `models/`.
 
 ### Findings
 
-- **Turbo q5 on Vulkan is the sweet spot**: Δ3.0s/step on Radeon 890M, good Portuguese accuracy with `--lang pt`.
-- **CPU cannot keep up with turbo**: 12-15s per 3s step even with all 24 threads. CPU is viable only with smaller models (base, small).
+- **Turbo q5 on Vulkan is the sweet spot**: balanced default is `2500/5000 keep=0 ac=1280`; accuracy-first can push to `2250/6750 keep=100 ac=1500`.
+- **CPU cannot keep up with turbo**: even with a native-optimized build, turbo q5 CPU stayed far from realtime on this 24-thread laptop.
+- **Medium q5 on CPU is only borderline**: `ggml-medium-q5_0.bin` with `ac=768` is the first CPU config that looked remotely plausible, but GPU still wins comfortably.
 - **Language auto-detect is unreliable for Portuguese**: 25-30% misdetection (Spanish, French, German, English). Use `--lang pt` explicitly.
 - **Performance power profile recommended**: laptop mode works but performance profile gives the iGPU more thermal headroom.
 - **GPU at 100% is expected**: Vulkan shaders (clip rectangle, shader interpolator) saturate the iGPU during encode. This is fine — the 890M is shared with display compositor but doesn't cause visible issues in performance profile.
@@ -158,7 +182,7 @@ Default: auto-selects the largest model present in `models/`.
 - [x] Per-process audio routing via PIPEWIRE_NODE (no system-wide mutation)
 - [x] Hallucination filtering (non-Latin, known phrases)
 - [x] Timestamp prefixes on output for latency visibility
-- [x] Tuned streaming params (3s step, 8s window, 200ms keep)
+- [x] Tuned streaming params (balanced default: 2.5s step, 5s window, 0ms keep, `ac=1280`)
 - [x] Tested on hardware — transcription works (en + pt)
 - [x] GitHub repo + license
 
@@ -166,12 +190,12 @@ Default: auto-selects the largest model present in `models/`.
 
 - [x] Test large-v3-turbo-q5_0 model — good quality, Δ3.0s on Vulkan
 - [x] Test Vulkan GPU vs CPU — Vulkan required for turbo, CPU too slow (12-15s/step)
-- [x] Tune step/length — 3000/8000 works, needs deeper understanding
+- [x] Tune step/length/keep/ac — overnight sweep picked balanced, accuracy-first, and conservative profiles
 - [x] Per-step delta timing (Δ) in output for latency visibility
 - [x] `--cpu` flag to disable Vulkan when needed
 - [x] Better Portuguese accuracy — `--lang pt` explicit, auto-detect too unreliable
-- [ ] Understand step/length/keep interaction, find optimal values
-- [ ] Test `-ac 768` (audio context limit) — used by whisper.cpp author for better perf
+- [x] Understand step/length/keep interaction well enough to choose balanced and conservative defaults
+- [x] Test `-ac` sweep and rank candidate context caps
 - [ ] Explore alternative/newer whisper models
 - [ ] Try quantized medium model (medium-q5 ~250MB, possibly faster than turbo-q5)
 - [ ] Evaluate whisper-stream VAD mode vs step mode
@@ -191,18 +215,17 @@ code path (whisper-stream + dictate via virtual PipeWire source), not whisper-cl
 - [ ] Test the pipeline end-to-end (virtual source → whisper-stream → dictate → WER)
 - [ ] Add Portuguese corpus (record or download from Common Voice)
 - [ ] Equivalence validation: compare virtual replay vs live mic on same audio
-- [ ] Rank combos by accuracy × speed, find Pareto frontier
+- [x] Rank combos by accuracy × speed, find Pareto frontier
 
-### Phase 3 — Clipboard + toggle UX
+### Phase 3 — Toggle UX
 
-- [ ] SIGUSR1 toggle tested and documented
-- [ ] `--output clipboard` mode (pipes text to `wl-copy`)
+- [x] SIGUSR1 toggle documented
 - [ ] Sway keybinding config example
 - [ ] Desktop notification on toggle (via `notify-send`)
 
 ### Phase 4 — Keystroke injection
 
-- [ ] `--output type` mode using `wtype` (Wayland keystroke injection)
+- [ ] `--output type` mode using `wtype` (Wayland keystroke injection, implemented but not yet verified here)
 - [ ] Works with terminals (types directly into focused window)
 - [ ] Works with neovim in insert mode
 
@@ -241,6 +264,7 @@ dictate/
 │       └── file.go           # Sink interface: stdout, file, multi
 ├── bench/
 │   └── corpus/               # test WAV + reference transcripts (WAVs gitignored)
-├── bin/                       # build output (gitignored)
+├── bin/                       # main app binaries
+├── .build/                    # benchmark-only binary variants
 └── models/                    # downloaded models (gitignored)
 ```

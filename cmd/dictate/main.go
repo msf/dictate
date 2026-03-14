@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"dictate/internal/audio"
 	"dictate/internal/output"
@@ -21,15 +22,22 @@ func main() {
 	model := flag.String("model", "", "path to whisper model (default: largest ggml-*.bin in models/)")
 	lang := flag.String("lang", "auto", "language code (auto, en, pt, etc.)")
 	device := flag.String("device", "", "audio source: PipeWire node ID or substring match on name/description")
+	outputMode := flag.String("output", "stdout", "output mode: stdout or type")
 	outFile := flag.String("file", "", "also write output to this file (append mode)")
+	rawFile := flag.String("raw-file", "", "also write raw text chunks to this file (append mode, no timestamps)")
 	cpuOnly := flag.Bool("cpu", false, "disable GPU inference, use CPU only")
 	listDevices := flag.Bool("list-devices", false, "list audio sources and exit")
 	pwNode := flag.Int("pw-node", 0, "PipeWire node ID (bypasses mic detection)")
-	step := flag.Int("step", 3000, "inference step interval in ms")
-	length := flag.Int("length", 8000, "audio window length in ms")
-	keep := flag.Int("keep", 200, "audio context kept between windows in ms")
-	ac := flag.Int("ac", 0, "audio context limit (0 = whisper default)")
+	step := flag.Int("step", 2500, "inference step interval in ms")
+	length := flag.Int("length", 5000, "audio window length in ms")
+	keep := flag.Int("keep", 0, "audio context kept between windows in ms")
+	ac := flag.Int("ac", 1280, "audio context limit (0 = whisper default)")
+	idleTimeout := flag.Duration("silence-timeout", 0, "stop after this much transcription silence (for example 15s); 0 disables")
 	flag.Parse()
+
+	if *outputMode != "stdout" && *outputMode != "type" {
+		log.Fatalf("unsupported --output %q (want stdout or type)", *outputMode)
+	}
 
 	if *listDevices {
 		sources, err := audio.ListSources()
@@ -76,21 +84,52 @@ func main() {
 	}
 	fmt.Fprintf(os.Stderr, "dictate: model %s\n", filepath.Base(*model))
 	fmt.Fprintf(os.Stderr, "dictate: lang=%s threads=%d inference=%s\n", *lang, threads, inference)
+	fmt.Fprintf(os.Stderr, "dictate: output=%s\n", *outputMode)
 	fmt.Fprintf(os.Stderr, "dictate: step=%dms length=%dms keep=%dms", *step, *length, *keep)
 	if *ac > 0 {
 		fmt.Fprintf(os.Stderr, " ac=%d", *ac)
 	}
 	fmt.Fprintf(os.Stderr, "\n")
 
-	// Always write to stdout. Optionally tee to a file.
-	var sink output.Sink = output.StdoutSink{}
+	var sinks []output.Sink
+	switch *outputMode {
+	case "stdout":
+		sinks = append(sinks, output.StdoutSink{})
+	case "type":
+		tsink, err := output.NewTypeSink()
+		if err != nil {
+			log.Fatalf("setup typed output: %v", err)
+		}
+		sinks = append(sinks, tsink)
+	}
+
 	if *outFile != "" {
 		fsink, err := output.NewFileSink(*outFile)
 		if err != nil {
 			log.Fatalf("open output file: %v", err)
 		}
-		defer fsink.Close()
-		sink = output.NewMultiSink(output.StdoutSink{}, fsink)
+		sinks = append(sinks, fsink)
+	}
+	if *rawFile != "" {
+		rsink, err := output.NewRawFileSink(*rawFile)
+		if err != nil {
+			log.Fatalf("open raw output file: %v", err)
+		}
+		sinks = append(sinks, rsink)
+	}
+
+	sink := output.NewMultiSink(sinks...)
+	defer sink.Close()
+
+	activity := make(chan struct{}, 1)
+	onText := func(raw, display string) {
+		sink.Write(raw, display)
+		if *idleTimeout > 0 {
+			select {
+			case activity <- struct{}{}:
+			default:
+			}
+		}
 	}
 
 	proc := whisper.NewProcess(whisper.Config{
@@ -100,7 +139,7 @@ func main() {
 		Threads:   threads,
 		PwNodeID:  micID,
 		CPUOnly:   *cpuOnly,
-		OnText:    sink.Write,
+		OnText:    onText,
 		Step:      *step,
 		Length:    *length,
 		Keep:      *keep,
@@ -112,6 +151,29 @@ func main() {
 	}
 
 	fmt.Fprintf(os.Stderr, "dictate: listening (SIGUSR1=toggle, SIGTERM=stop)\n")
+	if *idleTimeout > 0 {
+		fmt.Fprintf(os.Stderr, "dictate: silence-timeout=%s\n", idleTimeout.String())
+		go func(timeout time.Duration) {
+			timer := time.NewTimer(timeout)
+			defer timer.Stop()
+			for {
+				select {
+				case <-activity:
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+					timer.Reset(timeout)
+				case <-timer.C:
+					fmt.Fprintf(os.Stderr, "dictate: silence timeout reached, stopping\n")
+					_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+					return
+				}
+			}
+		}(*idleTimeout)
+	}
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGUSR1)

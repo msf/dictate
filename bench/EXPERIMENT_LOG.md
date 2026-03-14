@@ -14,10 +14,11 @@
 - Boundary duplication was reproduced at roughly step cadence and overlap trimming was added in `internal/whisper/process.go`.
 - Bench now reports `WER`, `enc-ms`, `headroom`, and stop mode.
 - `ggml-medium.bin` has been downloaded to `models/ggml-medium.bin`.
+- App-direction shift: typed output into a focused input box is now the next product goal, not more benchmark-only work.
 
 ## Known Findings So Far
 
-- Best current balance on this laptop is still turbo q5 on GPU around `step=3000 length=8000 keep=200 ac=0`.
+- Best current balance on this laptop is turbo q5 on GPU at `step=2500 length=5000 keep=0 ac=1280`.
 - Lower `step` can improve WER but eats safety margin quickly.
 - `ac=768` appears to improve encode time materially but has hurt accuracy on the current English corpus.
 - CPU turbo on this laptop previously looked too slow, but that conclusion needs a more evidence-rich re-check.
@@ -36,6 +37,42 @@
 4. Quantize medium to q5 if practical and benchmark it on CPU.
 5. Prepare and launch an overnight GPU sweep once semantics are fixed.
 
+## Overnight Sweep Summary
+
+- Overnight session completed successfully in `bench/results/overnight-20260314-gpu-sweep`.
+- Stage 1 selected `ac=1280` and `ac=1500` as the best accuracy/perf tradeoffs on the baseline `3000/8000/200` config.
+- Stage 2 clear winners were all in the `2250-3000ms` step range; no run reported dropped audio.
+
+### Best Accuracy
+
+- `step=2250 length=6750 keep=100 ac=1500`
+  - median `WER 9.0%`
+  - median `enc 1293.9ms`
+  - median headroom `956.1ms`
+
+### Nearly-As-Good With More Margin
+
+- `step=2250 length=6750 keep=0 ac=1280`
+  - median `WER 12.2%`
+  - median `enc 1112.5ms`
+  - median headroom `1137.5ms`
+- `step=2500 length=5000 keep=0 ac=1280`
+  - median `WER 12.8%`
+  - median `enc 1106.0ms`
+  - median headroom `1394.0ms`
+- `step=3000 length=6000 keep=0 ac=1280`
+  - median `WER 13.5%`
+  - median `enc 1099.2ms`
+  - median headroom `1900.8ms`
+
+### Current Recommendation
+
+- Accuracy-first profile: `2250/6750 keep=100 ac=1500`
+- Balanced default candidate: `2500/5000 keep=0 ac=1280`
+- Conservative busy-laptop profile: `3000/6000 keep=0 ac=1280`
+
+These still need one more round under synthetic system load before they should be treated as final defaults.
+
 ## Diary
 
 ### 2026-03-14
@@ -50,7 +87,7 @@
 - Fixed a benchmark footgun: explicit `keep=0` is now preserved instead of silently turning back into `200ms`.
 - Added `dictate: whisper-stream args=...` logging so future runs show the exact effective parameters sent upstream.
 - Audited upstream `ggml` CMake behavior: `GGML_NATIVE` defaults to `ON` on non-cross native builds.
-- Parameterized the Docker build so we can compare `GGML_NATIVE=ON` vs `GGML_NATIVE=OFF` explicitly (`make whisper-native`, `make whisper-generic`).
+- Parameterized the Docker build so we can compare `GGML_NATIVE=ON` vs `GGML_NATIVE=OFF` explicitly (`make whisper-native`, `make whisper-generic`). These comparison binaries now live under `.build/` so `bin/` remains the main app path.
 - Native-vs-generic build audit result: Docker native build clearly enables `-march=native` (`Adding CPU backend variant ggml-cpu: -march=native` in CMake output).
 - Early CPU re-validation for turbo q5:
   - native build, `ac=0`: forced kill after settle window; no final timings; `WER 73.7%`
@@ -70,3 +107,4 @@
   - stage 2: grid over `step`, `length`, and `keep` using the best `ac` values from stage 1
   - outputs per-run raw logs, a TSV, summaries, finalists, and a diary under `bench/results/overnight-*`
 - Launched an overnight GPU session: `bench/results/overnight-20260314-gpu-sweep/` with launcher log `bench/results/overnight-20260314-gpu-sweep.launch.log`.
+- Output fanout now carries both raw and annotated text, so typed sinks can use clean text while stdout/files can keep timestamps.

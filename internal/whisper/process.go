@@ -23,13 +23,13 @@ type Config struct {
 	Threads   int
 	PwNodeID  int
 	CPUOnly   bool
-	OnText    func(string)
+	OnText    func(raw, display string)
 
 	// Streaming parameters (ms). Step/Length default only when unset.
 	// Keep=0 is meaningful and must be preserved.
-	Step   int // inference interval (default 3000 when <= 0)
-	Length int // audio window (default 8000 when <= 0)
-	Keep   int // context kept between windows (default 200 only when < 0)
+	Step   int // inference interval (default 2500 when <= 0)
+	Length int // audio window (default 5000 when <= 0)
+	Keep   int // context kept between windows (default 0 only when < 0)
 	AC     int // audio context limit (0 = whisper default)
 }
 
@@ -47,13 +47,13 @@ type Process struct {
 
 func NewProcess(cfg Config) *Process {
 	if cfg.Step == 0 {
-		cfg.Step = 3000
+		cfg.Step = 2500
 	}
 	if cfg.Length == 0 {
-		cfg.Length = 8000
+		cfg.Length = 5000
 	}
 	if cfg.Keep < 0 {
-		cfg.Keep = 200
+		cfg.Keep = 0
 	}
 	return &Process{cfg: cfg}
 }
@@ -130,7 +130,7 @@ func (p *Process) startLocked() error {
 			delta := now.Sub(p.lastEmit).Truncate(100 * time.Millisecond)
 			p.lastEmit = now
 			stamped := fmt.Sprintf("[%s Δ%.1fs] %s", formatDuration(elapsed), delta.Seconds(), text)
-			p.cfg.OnText(stamped)
+			p.cfg.OnText(text, stamped)
 		}
 		p.mu.Lock()
 		p.running = false

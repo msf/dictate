@@ -1,9 +1,10 @@
 BIN_DIR   := bin
+ALT_BUILD_DIR := .build
 MODEL_DIR := models
 MODEL_URL := https://huggingface.co/ggerganov/whisper.cpp/resolve/main
 DOCKER_BUILD := DOCKER_BUILDKIT=1 docker build
 
-.PHONY: all whisper whisper-generic whisper-native build bench record models lint fmt vet run clean
+.PHONY: all whisper whisper-generic whisper-native build bench record models models-recommended model-gpu model-cpu-light lint fmt vet run clean
 
 all: whisper build models
 
@@ -16,12 +17,12 @@ $(BIN_DIR)/whisper-stream $(BIN_DIR)/dictate: Dockerfile go.mod $(wildcard cmd/*
 	@echo "built: $(BIN_DIR)/whisper-stream $(BIN_DIR)/dictate"
 
 whisper-native:
-	$(DOCKER_BUILD) --build-arg GGML_NATIVE=ON --output type=local,dest=bin-native/ .
-	@echo "built: bin-native/whisper-stream bin-native/dictate"
+	$(DOCKER_BUILD) --build-arg GGML_NATIVE=ON --output type=local,dest=$(ALT_BUILD_DIR)/native/ .
+	@echo "built: $(ALT_BUILD_DIR)/native/whisper-stream $(ALT_BUILD_DIR)/native/dictate"
 
 whisper-generic:
-	$(DOCKER_BUILD) --build-arg GGML_NATIVE=OFF --output type=local,dest=bin-generic/ .
-	@echo "built: bin-generic/whisper-stream bin-generic/dictate"
+	$(DOCKER_BUILD) --build-arg GGML_NATIVE=OFF --output type=local,dest=$(ALT_BUILD_DIR)/generic/ .
+	@echo "built: $(ALT_BUILD_DIR)/generic/whisper-stream $(ALT_BUILD_DIR)/generic/dictate"
 
 # --- Build (host Go, fast iteration) ---
 
@@ -35,6 +36,12 @@ bench: build
 
 models: $(MODEL_DIR)/ggml-tiny.bin $(MODEL_DIR)/ggml-base.bin $(MODEL_DIR)/ggml-small.bin
 
+models-recommended: $(MODEL_DIR)/ggml-large-v3-turbo-q5_0.bin $(MODEL_DIR)/ggml-medium-q5_0.bin
+
+model-gpu: $(MODEL_DIR)/ggml-large-v3-turbo-q5_0.bin
+
+model-cpu-light: $(MODEL_DIR)/ggml-medium-q5_0.bin
+
 $(MODEL_DIR)/ggml-tiny.bin:
 	@mkdir -p $(MODEL_DIR)
 	curl -L -sS -o $@ $(MODEL_URL)/ggml-tiny.bin
@@ -46,6 +53,14 @@ $(MODEL_DIR)/ggml-base.bin:
 $(MODEL_DIR)/ggml-small.bin:
 	@mkdir -p $(MODEL_DIR)
 	curl -L -sS -o $@ $(MODEL_URL)/ggml-small.bin
+
+$(MODEL_DIR)/ggml-large-v3-turbo-q5_0.bin:
+	@mkdir -p $(MODEL_DIR)
+	curl -L -sS -o $@ $(MODEL_URL)/ggml-large-v3-turbo-q5_0.bin
+
+$(MODEL_DIR)/ggml-medium-q5_0.bin:
+	@mkdir -p $(MODEL_DIR)
+	curl -L -sS -o $@ $(MODEL_URL)/ggml-medium-q5_0.bin
 
 # --- Benchmark corpus ---
 
@@ -76,4 +91,4 @@ run:
 # --- Clean ---
 
 clean:
-	rm -rf $(BIN_DIR) $(MODEL_DIR)
+	rm -rf $(BIN_DIR) $(ALT_BUILD_DIR) $(MODEL_DIR)
