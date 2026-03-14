@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -16,7 +15,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode"
 )
 
 type benchConfig struct {
@@ -83,7 +81,6 @@ func main() {
 		log.Fatalf("no .wav + .txt pairs found in %s", *corpusDir)
 	}
 
-	// Set up virtual PipeWire source.
 	vs, err := createVirtualSource()
 	if err != nil {
 		log.Fatalf("virtual source: %v", err)
@@ -135,162 +132,11 @@ func main() {
 	printResults(results)
 }
 
-// --- Virtual PipeWire Source ---
-
-// virtualSource uses pw-loopback to create a linked Audio/Sink + Audio/Source
-// pair. pw-cat plays into the sink; SDL2 (whisper-stream) captures from the source.
-type virtualSource struct {
-	sinkName     string
-	sourceName   string
-	sourceNodeID int
-	loopbackCmd  *exec.Cmd
-}
-
-func createVirtualSource() (*virtualSource, error) {
-	pid := os.Getpid()
-	sinkName := fmt.Sprintf("bench_sink_%d", pid)
-	sourceName := fmt.Sprintf("bench_mic_%d", pid)
-
-	cmd := exec.Command("pw-loopback",
-		fmt.Sprintf("--capture-props=media.class=Audio/Sink node.name=%s node.description=%s", sinkName, sinkName),
-		fmt.Sprintf("--playback-props=media.class=Audio/Source node.name=%s node.description=%s", sourceName, sourceName),
-	)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("pw-loopback: %w", err)
-	}
-
-	// Wait for PipeWire to register the nodes.
-	time.Sleep(500 * time.Millisecond)
-
-	sourceID, err := findNodeID(sourceName, "Audio/Source")
-	if err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return nil, err
-	}
-
-	return &virtualSource{
-		sinkName:     sinkName,
-		sourceName:   sourceName,
-		sourceNodeID: sourceID,
-		loopbackCmd:  cmd,
-	}, nil
-}
-
-func (vs *virtualSource) cleanup() {
-	if vs.loopbackCmd != nil && vs.loopbackCmd.Process != nil {
-		_ = vs.loopbackCmd.Process.Kill()
-		_ = vs.loopbackCmd.Wait()
-	}
-}
-
-func findNodeID(nodeName, mediaClass string) (int, error) {
-	out, err := exec.Command("pw-dump").Output()
-	if err != nil {
-		return 0, fmt.Errorf("pw-dump: %w", err)
-	}
-
-	var objects []struct {
-		ID   int    `json:"id"`
-		Type string `json:"type"`
-		Info struct {
-			Props map[string]any `json:"props"`
-		} `json:"info"`
-	}
-	if err := json.Unmarshal(out, &objects); err != nil {
-		return 0, fmt.Errorf("parse pw-dump: %w", err)
-	}
-
-	for _, o := range objects {
-		if o.Type != "PipeWire:Interface:Node" {
-			continue
-		}
-		props := o.Info.Props
-		nn, _ := props["node.name"].(string)
-		mc, _ := props["media.class"].(string)
-		if nn == nodeName && mc == mediaClass {
-			return o.ID, nil
-		}
-	}
-
-	return 0, fmt.Errorf("node %q (%s) not found in pw-dump", nodeName, mediaClass)
-}
-
-// rewireCapture disconnects all current links to a capture node's input ports,
-// then connects the source node's output ports to them. Uses pw-link.
-func rewireCapture(captureNode, sourceNode string) error {
-	// List current links to find what's connected to the capture node.
-	out, err := exec.Command("pw-link", "-lI").Output()
-	if err != nil {
-		return fmt.Errorf("pw-link -lI: %w", err)
-	}
-
-	var currentOutput string
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimRight(line, "\r")
-		if m := pwLinkPortRe.FindStringSubmatch(line); m != nil {
-			currentOutput = m[1]
-			continue
-		}
-		if m := pwLinkEdgeRe.FindStringSubmatch(line); m != nil {
-			inputPort := m[1]
-			if strings.HasPrefix(inputPort, captureNode+":") && currentOutput != "" {
-				fmt.Fprintf(os.Stderr, "bench: disconnect %s -> %s\n", currentOutput, inputPort)
-				_ = exec.Command("pw-link", "-d", currentOutput, inputPort).Run()
-			}
-		}
-	}
-
-	// Find source output ports and capture input ports.
-	outPorts, err := listPorts("pw-link", "-o", sourceNode)
-	if err != nil {
-		return err
-	}
-	inPorts, err := listPorts("pw-link", "-i", captureNode)
-	if err != nil {
-		return err
-	}
-
-	// Connect matching ports (pair by index).
-	n := len(outPorts)
-	if len(inPorts) < n {
-		n = len(inPorts)
-	}
-	for i := 0; i < n; i++ {
-		fmt.Fprintf(os.Stderr, "bench: link %s -> %s\n", outPorts[i], inPorts[i])
-		if err := exec.Command("pw-link", outPorts[i], inPorts[i]).Run(); err != nil {
-			return fmt.Errorf("pw-link %s %s: %w", outPorts[i], inPorts[i], err)
-		}
-	}
-
-	if n == 0 {
-		return fmt.Errorf("no ports to link between %s and %s", sourceNode, captureNode)
-	}
-	return nil
-}
-
-func listPorts(tool, flag, nodePrefix string) ([]string, error) {
-	out, err := exec.Command(tool, flag).Output()
-	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w", tool, flag, err)
-	}
-	var ports []string
-	for _, line := range strings.Split(string(out), "\n") {
-		port := strings.TrimSpace(line)
-		if strings.HasPrefix(port, nodePrefix+":") {
-			ports = append(ports, port)
-		}
-	}
-	return ports, nil
-}
-
 // --- Benchmark Execution ---
 
 func runBench(cfg benchConfig, c corpus, vs *virtualSource, settleSeconds float64) (result, error) {
 	start := time.Now()
 
-	// Build dictate args.
 	args := []string{
 		"--model", cfg.Model,
 		"--lang", cfg.Lang,
@@ -319,7 +165,6 @@ func runBench(cfg benchConfig, c corpus, vs *virtualSource, settleSeconds float6
 		return result{}, fmt.Errorf("start dictate: %w", err)
 	}
 
-	// Collect stdout lines in background.
 	var lines []string
 	scanDone := make(chan struct{})
 	go func() {
@@ -341,7 +186,6 @@ func runBench(cfg benchConfig, c corpus, vs *virtualSource, settleSeconds float6
 		return result{}, fmt.Errorf("rewire: %w", err)
 	}
 
-	// Play WAV into the virtual sink.
 	fmt.Fprintf(os.Stderr, "bench: playing %s\n", c.WAVPath)
 	playCmd := exec.Command("pw-cat", "--playback", "--target", vs.sinkName, c.WAVPath)
 	playCmd.Stderr = os.Stderr
@@ -350,19 +194,16 @@ func runBench(cfg benchConfig, c corpus, vs *virtualSource, settleSeconds float6
 		return result{}, fmt.Errorf("pw-cat playback: %w", err)
 	}
 
-	// Wait for whisper to process the final audio window.
-	settle := time.Duration(float64(cfg.Step+cfg.Length)*float64(time.Millisecond)) +
+	settleTime := time.Duration(float64(cfg.Step+cfg.Length)*float64(time.Millisecond)) +
 		time.Duration(settleSeconds*float64(time.Second))
-	fmt.Fprintf(os.Stderr, "bench: settling %.1fs for final inference\n", settle.Seconds())
-	time.Sleep(settle)
+	fmt.Fprintf(os.Stderr, "bench: settling %.1fs for final inference\n", settleTime.Seconds())
+	time.Sleep(settleTime)
 
-	// Stop dictate.
 	forcedStop := stopProcess(cmd, 5*time.Second)
 	<-scanDone
 
 	elapsed := time.Since(start)
 
-	// Strip timestamps and join all transcribed text.
 	hypothesis := extractText(lines)
 	wer := computeWER(c.Reference, hypothesis)
 	encodeMS := extractEncodeMS(stderrBuf.String())
@@ -402,135 +243,6 @@ func stopProcess(cmd *exec.Cmd, timeout time.Duration) bool {
 		<-done
 		return true
 	}
-}
-
-func extractEncodeMS(stderr string) float64 {
-	m := encodeTimingRe.FindStringSubmatch(stderr)
-	if len(m) != 3 {
-		return 0
-	}
-	ms, err := strconv.ParseFloat(m[2], 64)
-	if err != nil {
-		return 0
-	}
-	return ms
-}
-
-// --- Output Parsing ---
-
-func extractText(lines []string) string {
-	var merged []string
-	for _, line := range lines {
-		text := timestampRe.ReplaceAllString(line, "")
-		text = strings.TrimSpace(text)
-		if text != "" {
-			words := strings.Fields(text)
-			if len(words) == 0 {
-				continue
-			}
-			if len(merged) == 0 {
-				merged = append(merged, words...)
-				continue
-			}
-			overlap := longestTokenOverlap(merged, words)
-			merged = append(merged, words[overlap:]...)
-		}
-	}
-	return strings.Join(merged, " ")
-}
-
-func longestTokenOverlap(a, b []string) int {
-	max := len(a)
-	if len(b) < max {
-		max = len(b)
-	}
-	for k := max; k >= 1; k-- {
-		ok := true
-		for i := 0; i < k; i++ {
-			if normalizeToken(a[len(a)-k+i]) != normalizeToken(b[i]) {
-				ok = false
-				break
-			}
-		}
-		if ok {
-			return k
-		}
-	}
-	return 0
-}
-
-func normalizeToken(s string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '\'' {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-// --- WER (Word Error Rate) ---
-
-func computeWER(reference, hypothesis string) float64 {
-	ref := normalizeWords(reference)
-	hyp := normalizeWords(hypothesis)
-
-	if len(ref) == 0 {
-		if len(hyp) == 0 {
-			return 0
-		}
-		return 1
-	}
-
-	// Levenshtein distance on word sequences.
-	n, m := len(ref), len(hyp)
-	prev := make([]int, m+1)
-	curr := make([]int, m+1)
-
-	for j := 0; j <= m; j++ {
-		prev[j] = j
-	}
-
-	for i := 1; i <= n; i++ {
-		curr[0] = i
-		for j := 1; j <= m; j++ {
-			cost := 1
-			if ref[i-1] == hyp[j-1] {
-				cost = 0
-			}
-			curr[j] = min(
-				prev[j]+1,      // deletion
-				curr[j-1]+1,    // insertion
-				prev[j-1]+cost, // substitution
-			)
-		}
-		prev, curr = curr, prev
-	}
-
-	return float64(prev[m]) / float64(n)
-}
-
-func normalizeWords(s string) []string {
-	s = strings.ToLower(s)
-	var buf strings.Builder
-	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '\'' {
-			buf.WriteRune(r)
-		} else {
-			buf.WriteRune(' ')
-		}
-	}
-	return strings.Fields(buf.String())
-}
-
-func min(a, b, c int) int {
-	if b < a {
-		a = b
-	}
-	if c < a {
-		a = c
-	}
-	return a
 }
 
 // --- Corpus Loading ---

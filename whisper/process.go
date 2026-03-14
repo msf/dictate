@@ -11,19 +11,22 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+
+	"dictate/text"
 )
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
 // Config holds all parameters for a whisper-stream subprocess.
 type Config struct {
-	StreamBin string
-	Model     string
-	Lang      string
-	Threads   int
-	PwNodeID  int
-	CPUOnly   bool
-	OnText    func(raw, display string)
+	StreamBin  string
+	Model      string
+	Lang       string
+	Threads    int
+	PwNodeID   int
+	CPUOnly    bool
+	OnText     func(raw, display string)
+	OnActivity func() // called on any whisper output, before filtering
 
 	// Streaming parameters (ms). Step/Length default only when unset.
 	// Keep=0 is meaningful and must be preserved.
@@ -117,7 +120,13 @@ func (p *Process) startLocked() error {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			text := parseLine(scanner.Text())
-			if text == "" || isHallucination(text) {
+			if text == "" {
+				continue
+			}
+			if p.cfg.OnActivity != nil {
+				p.cfg.OnActivity()
+			}
+			if isHallucination(text) {
 				continue
 			}
 			text = trimLeadingOverlap(p.lastText, text)
@@ -194,26 +203,7 @@ func trimLeadingOverlap(prev, curr string) string {
 		return curr
 	}
 
-	max := len(prevWords)
-	if len(currWords) < max {
-		max = len(currWords)
-	}
-
-	overlap := 0
-	for k := max; k >= 1; k-- {
-		ok := true
-		for i := 0; i < k; i++ {
-			if normalizeToken(prevWords[len(prevWords)-k+i]) != normalizeToken(currWords[i]) {
-				ok = false
-				break
-			}
-		}
-		if ok {
-			overlap = k
-			break
-		}
-	}
-
+	overlap := text.OverlapCount(prevWords, currWords)
 	if overlap == 0 {
 		return curr
 	}
@@ -221,16 +211,6 @@ func trimLeadingOverlap(prev, curr string) string {
 		return ""
 	}
 	return strings.Join(currWords[overlap:], " ")
-}
-
-func normalizeToken(s string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '\'' {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // isHallucination detects whisper artifacts from silence/noise.

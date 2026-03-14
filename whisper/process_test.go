@@ -60,3 +60,94 @@ func TestStreamArgsPreserveZeroKeep(t *testing.T) {
 		}
 	}
 }
+
+func TestParseLine(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "ansi-stripped",
+			raw:  "\x1b[2Khello world",
+			want: "hello world",
+		},
+		{
+			name: "carriage-return-takes-last",
+			raw:  "old partial\rnew output",
+			want: "new output",
+		},
+		{
+			name: "bracketed-token-blank-audio",
+			raw:  "[BLANK_AUDIO]",
+			want: "",
+		},
+		{
+			name: "normal-text",
+			raw:  "this is a test",
+			want: "this is a test",
+		},
+		{
+			name: "empty-input",
+			raw:  "",
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseLine(tt.raw)
+			if got != tt.want {
+				t.Fatalf("parseLine(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsHallucination(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{
+			name: "cjk-dominant",
+			text: "これはテストです",
+			want: true,
+		},
+		{
+			name: "thank-you-for-watching",
+			text: "Thank you for watching",
+			want: true,
+		},
+		{
+			name: "obrigado-por-assistir",
+			text: "obrigado por assistir",
+			want: true,
+		},
+		{
+			name: "normal-english",
+			text: "The quick brown fox jumps over the lazy dog",
+			want: false,
+		},
+		{
+			name: "normal-portuguese",
+			text: "Eu preciso terminar este relatório hoje",
+			want: false,
+		},
+		{
+			name: "mixed-more-latin",
+			text: "hello world café 日",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isHallucination(tt.text)
+			if got != tt.want {
+				t.Fatalf("isHallucination(%q) = %v, want %v", tt.text, got, tt.want)
+			}
+		})
+	}
+}

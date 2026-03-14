@@ -121,35 +121,40 @@ func main() {
 	sink := output.NewMultiSink(sinks...)
 	defer sink.Close()
 
+	// Activity fires on any whisper output (before hallucination/overlap
+	// filtering) so the idle timer stays alive while the mic is active.
 	activity := make(chan struct{}, 1)
-	onText := func(raw, display string) {
-		sink.Write(raw, display)
-		if *idleTimeout > 0 {
-			select {
-			case activity <- struct{}{}:
-			default:
-			}
+	onActivity := func() {
+		select {
+		case activity <- struct{}{}:
+		default:
 		}
 	}
 
+	onText := func(raw, display string) {
+		sink.Write(raw, display)
+	}
+
 	proc := whisper.NewProcess(whisper.Config{
-		StreamBin: streamBin,
-		Model:     *model,
-		Lang:      *lang,
-		Threads:   threads,
-		PwNodeID:  micID,
-		CPUOnly:   *cpuOnly,
-		OnText:    onText,
-		Step:      *step,
-		Length:    *length,
-		Keep:      *keep,
-		AC:        *ac,
+		StreamBin:  streamBin,
+		Model:      *model,
+		Lang:       *lang,
+		Threads:    threads,
+		PwNodeID:   micID,
+		CPUOnly:    *cpuOnly,
+		OnText:     onText,
+		OnActivity: onActivity,
+		Step:       *step,
+		Length:     *length,
+		Keep:       *keep,
+		AC:         *ac,
 	})
 
 	if err := proc.Start(); err != nil {
 		log.Fatalf("start whisper: %v", err)
 	}
 
+	done := make(chan struct{})
 	fmt.Fprintf(os.Stderr, "dictate: listening (SIGUSR1=toggle, SIGTERM=stop)\n")
 	if *idleTimeout > 0 {
 		fmt.Fprintf(os.Stderr, "dictate: silence-timeout=%s\n", idleTimeout.String())
@@ -168,7 +173,7 @@ func main() {
 					timer.Reset(timeout)
 				case <-timer.C:
 					fmt.Fprintf(os.Stderr, "dictate: silence timeout reached, stopping\n")
-					_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+					close(done)
 					return
 				}
 			}
@@ -178,11 +183,18 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGUSR1)
 
-	for sig := range sigs {
-		switch sig {
-		case syscall.SIGUSR1:
-			proc.Toggle()
-		default:
+	for {
+		select {
+		case sig := <-sigs:
+			switch sig {
+			case syscall.SIGUSR1:
+				proc.Toggle()
+			default:
+				fmt.Fprintf(os.Stderr, "\ndictate: shutting down\n")
+				proc.Stop()
+				return
+			}
+		case <-done:
 			fmt.Fprintf(os.Stderr, "\ndictate: shutting down\n")
 			proc.Stop()
 			return
@@ -248,14 +260,4 @@ func findStreamBinary() (string, error) {
 		return candidate, nil
 	}
 	return "", fmt.Errorf("whisper-stream not found at %s (run 'make whisper' first)", candidate)
-}
-
-func clamp(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }

@@ -1,6 +1,7 @@
 package output
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -86,7 +87,6 @@ func (s *FileSink) Write(raw, display string) {
 		text = raw
 	}
 	fmt.Fprintln(s.f, text)
-	_ = s.f.Sync()
 }
 
 func (s *FileSink) Close() error {
@@ -109,10 +109,11 @@ func (m *MultiSink) Write(raw, display string) {
 }
 
 func (m *MultiSink) Close() error {
+	var errs []error
 	for _, s := range m.sinks {
-		s.Close()
+		errs = append(errs, s.Close())
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func formatTypedChunk(text string) string {
