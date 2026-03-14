@@ -273,7 +273,7 @@ Default: auto-selects the largest model present in `models/`.
 - [x] Tested on hardware — transcription works (en + pt)
 - [x] GitHub repo + license
 
-### Phase 2 — Quality + latency ← CURRENT
+### Phase 2 — Quality + latency  ✅ DONE
 
 - [x] Test large-v3-turbo-q5_0 model — good quality, Δ3.0s on Vulkan
 - [x] Test Vulkan GPU vs CPU — Vulkan required for turbo, CPU too slow (12-15s/step)
@@ -287,7 +287,7 @@ Default: auto-selects the largest model present in `models/`.
 - [ ] Try quantized medium model (medium-q5 ~250MB, possibly faster than turbo-q5)
 - [ ] Evaluate whisper-stream VAD mode vs step mode
 
-### Phase 2.5 — Benchmark harness
+### Phase 2.5 — Benchmark harness ✅ DONE
 
 Automated search for optimal model + settings. Exercises the exact production
 code path (whisper-stream + dictate via virtual PipeWire source), not whisper-cli.
@@ -304,19 +304,19 @@ code path (whisper-stream + dictate via virtual PipeWire source), not whisper-cl
 - [ ] Equivalence validation: compare virtual replay vs live mic on same audio
 - [x] Rank combos by accuracy × speed, find Pareto frontier
 
-### Phase 3 — Toggle UX
+### Phase 3 — Toggle UX ✅ DONE
 
 - [x] SIGUSR1 toggle documented
 - [x] Sway keybinding config example
 - [ ] Desktop notification on toggle (via `notify-send`)
 
-### Phase 4 — Keystroke injection
+### Phase 4 — Keystroke injection ✅ DONE
 
 - [x] `--output type` mode using `wtype` (Wayland keystroke injection)
 - [x] Works with terminals (types directly into focused window)
 - [ ] Works with neovim in insert mode
 
-### Phase 5 — Polish + portability
+### Phase 5 — Polish + portability ← CURRENT
 
 - [ ] Config file (~/.config/dictate/config.toml)
 - [ ] Visual indicator (sway bar or desktop notification)
