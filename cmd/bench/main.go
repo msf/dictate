@@ -48,8 +48,10 @@ type result struct {
 	Duration   time.Duration
 }
 
-var timestampRe = regexp.MustCompile(`^\[\d{2}:\d{2}\.\d Δ[\d.]+s\] `)
-var encodeTimingRe = regexp.MustCompile(`whisper_print_timings:\s+encode time =\s+([\d.]+) ms /\s+\d+ runs \(\s+([\d.]+) ms per run\)`)
+var (
+	timestampRe    = regexp.MustCompile(`^\[\d{2}:\d{2}\.\d Δ[\d.]+s\] `)
+	encodeTimingRe = regexp.MustCompile(`whisper_print_timings:\s+encode time =\s+([\d.]+) ms /\s+\d+ runs \(\s+([\d.]+) ms per run\)`)
+)
 
 func main() {
 	log.SetFlags(0)
