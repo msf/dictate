@@ -324,6 +324,16 @@ code path (whisper-stream + dictate via virtual PipeWire source), not whisper-cl
 - [ ] Test on ThinkPad T460 with tiny model
 - [ ] Nix flake (future, for hermetic deployment)
 
+### Phase 6 — Beyond whisper: better ASR models
+
+whisper.cpp only supports whisper-family models. The ASR landscape has moved past whisper — these are worth exploring as a replacement for `whisper-stream`:
+
+- **NVIDIA Parakeet TDT v3** (0.6B, CC-BY-4.0): 6.3% WER, built-in punctuation & capitalization, 25 EU languages (EN + PT), runs via ONNX on CPU at RTFx ~3000+. Community consensus as the current sweet spot. Has chunked streaming support.
+- **NVIDIA Nemotron Speech Streaming** (0.6B, NVIDIA Open): 6.9% WER, cache-aware native streaming down to 80ms chunks. EN-only. Purpose-built for real-time dictation. Released March 2026.
+- **IBM Granite 4.0 1B Speech** (2B total, Apache 2.0): 5.5% WER, lowest on Open ASR leaderboard. Batch only (no streaming). Has keyword biasing for names/acronyms. EN, PT, FR, DE, ES, JA.
+
+Integration path: replace `whisper-stream` with an ONNX or NeMo-based streaming subprocess. The Go binary and pipe architecture stay the same. Open whisper.cpp issues (#1732, #3118) requesting Parakeet support have no implementation.
+
 ## File Layout
 
 ```
