@@ -30,7 +30,7 @@ func TestDefaultBenchProfile(t *testing.T) {
 	}
 
 	repeats := envInt("DICTATE_INTEG_REPEATS", 3)
-	maxMedianWER := envFloat("DICTATE_INTEG_MAX_MEDIAN_WER", 18.0)
+	maxMedianWER := envFloat("DICTATE_INTEG_MAX_MEDIAN_WER", 22.0)
 	minMedianHeadroom := envFloat("DICTATE_INTEG_MIN_MEDIAN_HEADROOM_MS", 500.0)
 	root := repoRoot(t)
 

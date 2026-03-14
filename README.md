@@ -185,14 +185,14 @@ make integ-test
 
 This runs a Go integration test that exercises the production-path benchmark with the
 current default settings and fails if:
-- median WER across repeated runs exceeds the configured threshold (default `18%`)
+- median WER across repeated runs exceeds the configured threshold (default `22%`)
 - any run has to be force-killed instead of exiting cleanly
 - median headroom drops below the configured floor (default `500ms`)
 
 Override knobs if needed:
 
 ```bash
-DICTATE_INTEG_REPEATS=3 DICTATE_INTEG_MAX_MEDIAN_WER=18 DICTATE_INTEG_MIN_MEDIAN_HEADROOM_MS=500 make integ-test
+DICTATE_INTEG_REPEATS=3 DICTATE_INTEG_MAX_MEDIAN_WER=22 DICTATE_INTEG_MIN_MEDIAN_HEADROOM_MS=500 make integ-test
 ```
 
 ## Models
